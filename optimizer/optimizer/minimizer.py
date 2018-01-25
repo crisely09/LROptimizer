@@ -2,7 +2,8 @@ from horton import *
 import numpy as np
 import pyci
 from optimizer.tools.slsqp import *
-from optimizer.tools.functions import *
+from optimizer.tools.newfunctions import *
+#from optimizer.tools.functions import *
 
 
 class VariationalOptimizer(object):

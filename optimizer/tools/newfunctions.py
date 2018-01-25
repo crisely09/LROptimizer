@@ -7,12 +7,15 @@ import numpy as np
 import math
 from nose.plugins.attrib import attr
 import pyci
-from wfns.ham import *
-from geminals.ci.fci import FCI
-from geminals.wrapper.horton import gaussian_fchk
+from wfns.wfn.ci.base import CIWavefunction
+from wfns.ham.chemical import ChemicalHamiltonian
+from wfns.solver.ci import brute
+#from geminals.ci.fci import FCI
+#from geminals.wrapper.horton import gaussian_fchk
 
 __all__ = ['get_ci_info', 'get_ci_sd_pyci', 'get_dets_pyci',
-           'get_dms_from_fanCI_simple',
+           'get_dms_from_fanCI_simple', 'get_larger_ci_coeffs',
+           'compute_ci_fanCI', 'compute_fci_fanCI',
            'compute_density_dmfci', 'dm_mine',
            'get_dm_from_fci', 'get_density_error']
 
@@ -63,9 +66,36 @@ def get_ci_info(fn):
     return civec, coeffs
 
 
+def get_larger_ci_coeffs(coeffs, limit=1e-6):
+    """
+    Find and count the CI expansion coefficients with
+    values above certain limit.
+
+    Returns:
+    ccount: int
+        Number of coefficients greater than limit value.
+    location: np darray (ccount,)
+        Mask array with the location of the desired coefficients.
+    """
+
+    location = np.where(abs(coeffs)>limit)
+    ccount = len(location)
+    return ccount, location
+
+
 def get_ci_sd_pyci(nbasis, alphas, betas):
     """
     Get Slater determinants and coefficients from PyCI
+    
+    In PyCI Determinants are store as list of integers of occupied
+    orbitals, alphas and betas separately.
+
+    FanCI uses bit strings converted to integers.
+
+    Returns
+    -------
+    sd_vec
+        List with Slater Determinants.
     """
     sd_vec = []
     # Loop over civectors and make strings
@@ -119,7 +149,7 @@ def compute_fci_fanCI(nelec, nbasis, one, two, nuc_nuc):
 
     # optimize
     energies, coeffs = brute(fci, ham)
-    return energies[0] + nuc_nuc, coeffs[0]
+    return energies[0] + nuc_nuc, coeffs[:,0]
 
 
 def compute_ci_fanCI(nelec, nbasis, sd_vec, one, two, nuc_nuc):
@@ -143,12 +173,12 @@ def compute_ci_fanCI(nelec, nbasis, sd_vec, one, two, nuc_nuc):
     CI Ground State Energy, Groud State CI coefficients
     """
     nspin = nbasis*2
-    ci = CI(nelec, nspin, sd_vec)
-    ham = ChemicalHamiltonian(one_int, two_int, orbtype='restricted', energy_nuc_nuc=nuc_nuc)
+    ci = CIWavefunction(nelec, nspin, sd_vec=sd_vec)
+    ham = ChemicalHamiltonian(one, two, orbtype='restricted', energy_nuc_nuc=nuc_nuc)
 
     # optimize
     energies, coeffs = brute(ci, ham)
-    return energies[0] + nuc_nuc, coeffs[0]
+    return energies[0] + nuc_nuc, coeffs[:,0]
 
 
 def distance(point_grid1, point_grid2):

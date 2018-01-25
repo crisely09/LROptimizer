@@ -4,7 +4,7 @@ from horton import *
 import numpy as np
 import pyci
 from optimizer.tools.slsqp import *
-from optimizer.tools.functions import *
+#from optimizer.tools.functions import *
 from optimizer.tools.newfunctions import *
 from ci.cispace import FullCISpace
 from wfns.ham.density import *
@@ -264,6 +264,8 @@ class PyCIVariationalOptimizer(object):
         # Compute the energy
         op = ciham.sparse_operator(wfn)
         result = pyci.cisolve(op)
+        # The density matrices from pyci are no right!!
+        #dm1_2, dm2_2 = pyci.fullci_density_matrices(wfn, result)
         (dm1_2,), (dm2_2,) = density_matrix(result[0][1], civec, self.nbasis)
         mu_energy2 = np.einsum('ij,ij', one_mo, dm1_2)\
                         + 0.5*np.einsum('ijkl, ijkl', two_mo, dm2_2)
@@ -281,6 +283,49 @@ class PyCIVariationalOptimizer(object):
                         + 0.5*np.einsum('ijkl, ijkl', self.two_mo, dm2_3)
         print("ENERGY(mu) = ", mu_energy3)
         print("=============================== ENERGY 2= ", energy_real3)
+
+
+    def compute_energy_lr_muspace(self, pars):
+        """Function for Scipy to compute the energy"""
+        # Compute Long-Range integrals
+        c, alpha = pars
+        c *= self.mu
+        alpha *= self.mu
+        alpha *= alpha
+        erf = self.obasis.compute_erf_repulsion(self.mu)
+        gauss = self.obasis.compute_gauss_repulsion(c, alpha)
+        erf += gauss
+        # Transform integrals
+        (one_mo,), (two_mo,) = transform_integrals(self.one, erf, 'tensordot', self.orb_alpha)
+        # Using PyCI to compute FCI energy
+        ciham = pyci.FullCIHam(self.core_energy, one_mo, two_mo)
+        na = self.nelec/2
+        nb = na
+        wfn = pyci.FullCIWfn(ciham.nbasis, na, nb)
+        alphas, betas = get_dets_pyci(wfn)
+        civec = get_ci_sd_pyci(self.nbasis, alphas, betas)
+        print "civec", civec
+
+        # Compute the energy
+        op = ciham.sparse_operator(wfn)
+        result = pyci.cisolve(op)
+        # Check coefficients larger than certain value
+        ccount, loc = get_larger_ci_coeffs(result[0][1], 1e-10)
+        print "coeffs ", result[0][1]
+        print "loc", loc
+        new_civec = np.array(civec)[loc]
+        print "new civec", new_civec
+        energy, coeffs = compute_ci_fanCI(self.nelec, self.nbasis, new_civec,
+                                          one_mo, two_mo, self.core_energy)
+        (dm1,), (dm2,) = density_matrix(coeffs, new_civec, self.nbasis)
+        self.mu_energy = np.einsum('ij,ij', one_mo, dm1)\
+                        + 0.5*np.einsum('ijkl, ijkl', two_mo, dm2) + self.core_energy
+        energy_exp = np.einsum('ij,ij', self.one_mo, dm1)\
+                        + 0.5*np.einsum('ijkl, ijkl', self.two_mo, dm2)
+        energy_exp += self.core_energy
+        print("ENERGY(mu) = ", self.mu_energy)
+        print("=============================== ENERGY = ", energy_exp)
+        return energy_exp
 
 
     def compute_energy_withx(self, pars):
@@ -500,6 +545,8 @@ class PyCIVariationalOptimizer(object):
             fn = self.compute_energy_withx
         elif self.hamtype == 'withxc':
             fn = self.compute_energy_withxc
+        elif self.hamtype == 'lrmu':
+            fn = self.compute_energy_lr_muspace
 
         result = fmin_slsqp(fn, pars, full_output=True)
         fmin = result[0]
