@@ -1,19 +1,20 @@
 """Variational optimizer of long-range erfgau potential"""
 
-from horton import *
 import numpy as np
+
 import pyci
-from optimizer.tools.slsqp import *
-#from optimizer.tools.functions import *
-from optimizer.tools.newfunctions import *
+# TODO replace this by explicit import
+from horton import *
 from ci.cispace import FullCISpace
 from wfns.ham.density import *
+from optimizer.tools.slsqp import *
+from optimizer.tools.functions import *
 
 
-__all__ = ['PyCIVariationalOptimizer',]
+__all__ = ['VariationalOptimizer',]
 
 
-class PyCIVariationalOptimizer(object):
+class VariationalOptimizer(object):
     """
     Class to optimize the variables of the Gaussian function
     of the erfgau model potential for range-separated methods.
@@ -28,7 +29,6 @@ class PyCIVariationalOptimizer(object):
     solve_rlda
     compute_energy_lr
     compute_energy_withx
-    compute_energy_withxc
     optimize_energy
     
     """
@@ -49,8 +49,6 @@ class PyCIVariationalOptimizer(object):
             options are:
             `lr` : Use LR potential and evaluate FCI.
             `withx`: Keep the exact-exchange fixed through the whole range.
-            `withxc`: Keep the exchange and correlation potential fixed
-            the whole range.
         refmethod: str
             Name of the method from where we get the MO basis.
         """
@@ -304,17 +302,13 @@ class PyCIVariationalOptimizer(object):
         wfn = pyci.FullCIWfn(ciham.nbasis, na, nb)
         alphas, betas = get_dets_pyci(wfn)
         civec = get_ci_sd_pyci(self.nbasis, alphas, betas)
-        print "civec", civec
 
         # Compute the energy
         op = ciham.sparse_operator(wfn)
         result = pyci.cisolve(op)
         # Check coefficients larger than certain value
         ccount, loc = get_larger_ci_coeffs(result[0][1], 1e-10)
-        print "coeffs ", result[0][1]
-        print "loc", loc
         new_civec = np.array(civec)[loc]
-        print "new civec", new_civec
         energy, coeffs = compute_ci_fanCI(self.nelec, self.nbasis, new_civec,
                                           one_mo, two_mo, self.core_energy)
         (dm1,), (dm2,) = density_matrix(coeffs, new_civec, self.nbasis)
@@ -328,6 +322,56 @@ class PyCIVariationalOptimizer(object):
         return energy_exp
 
 
+    def compute_energy_lrdoci(self, pars):
+        """Function for Scipy to compute the energy"""
+        # Compute Long-Range integrals
+        c, alpha = pars
+        c *= self.mu
+        alpha *= self.mu
+        alpha *= alpha
+        erf = self.obasis.compute_erf_repulsion(self.mu)
+        gauss = self.obasis.compute_gauss_repulsion(c, alpha)
+        erf += gauss
+        # Transform integrals
+        (one_mo,), (two_mo,) = transform_integrals(self.one, erf, 'tensordot', self.orb_alpha)
+
+        # Use whole interaction terms when only
+        # two spatial orbitals
+        for i in range(self.nbasis):
+            for j in range(self.nbasis):
+                two_mo[i,j,i,j] = self.two_mo[i,j,i,j]
+                two_mo[i,j,j,i] = self.two_mo[i,j,j,i]
+
+        # Using CIFlow to compute FCI and Olsens for DMs
+        # Write files
+        molout = IOData(core_energy=self.core_energy, nelec=self.nelec,
+                        energy=self.hf_energy, obasis=self.obasis,
+                        one_mo=one_mo, two_mo=two_mo, dm_alpha=self.dm_alpha)
+        # useful for exchange with other codes
+        datname = '%s_avdz' % self.name
+        molout.to_file('%s_%2.2f.psi4.dat' % (datname, self.mu))
+        dm1, dm2 = get_dm_from_fci(datname, one_mo, two_mo, self.core_energy,
+                                    self.hf_energy, self.nelec, self.mu)
+        self.mu_energy = np.einsum('ij,ij', one_mo, dm1)\
+                        + 0.5*np.einsum('ijkl, ijkl', two_mo, dm2) + self.core_energy
+        energy_real = np.einsum('ij,ij', self.one_mo, dm1)\
+                        + 0.5*np.einsum('ijkl, ijkl', self.two_mo, dm2)
+        energy_real += self.core_energy
+        print("ENERGY(mu) = ", self.mu_energy)
+        print("=============================== ENERGY = ", energy_real)
+        return float(energy_real)
+
+
+    def compute_energy_withx(self, pars):
+        """Function for Scipy to compute the energy"""
+        # Compute Long-Range integrals
+        c, alpha = pars
+        c *= self.mu
+        alpha *= self.mu
+        alpha *= alpha
+        erf = self.obasis.compute_erf_repulsion(self.mu)
+        gauss = self.obasis.compute_gauss_repulsion(c, alpha)
+        erf += gauss
     def compute_energy_withx(self, pars):
         """Function for Scipy to compute the energy"""
         # Compute Long-Range integrals

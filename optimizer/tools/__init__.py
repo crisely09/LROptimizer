@@ -1,2 +1,1 @@
-from slsqp import *
-from functions import *
+"""Module with tools and helpful functions."""
