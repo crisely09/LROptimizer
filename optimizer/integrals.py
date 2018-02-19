@@ -5,7 +5,8 @@ from scipy.linalg import eigh
 
 from horton.io.iodata import IOData
 from horton.gbasis.gobasis import GOBasis
-from horton.meanfield.intextransform import transform_integrals
+from horton.meanfield.orbitals import Orbitals
+from horton.meanfield.indextransform import transform_integrals
 
 
 class IntegralsWrapper(object):
@@ -14,7 +15,7 @@ class IntegralsWrapper(object):
     
     """
 
-    def __init__(self, mol, obasis, one_approx, two_approx, pars, *orbs):
+    def __init__(self, mol, obasis, one_approx, two_approx, pars, orbs):
         """
         one_approx: str
             Approximation for the one-electron Hamiltonian.
@@ -42,22 +43,24 @@ class IntegralsWrapper(object):
         if not isinstance(mol, IOData):
             raise TypeError("mol must be a HORTON IOData object")
         if not isinstance(obasis, GOBasis):
-            raise TypeError("obasis must be a HORTON GOBasis object")
-        if not isinstance(one_approx, (list, str)):
+             TypeError("obasis must be a HORTON GOBasis object")
+        if not all([isinstance(approx, str) for approx in one_approx]):
             raise TypeError("one_approx should be a list of str for the approximations to\
                              be included in the one-electron integrals")
-        if len(one_approx) > 1:
-            raise ValueError("Only one option could be chosen for the one-electron integrals")
         if one_approx[0] not in ['standard', 'sr-x']:
             raise ValueError("The option given is not implemented, valid options are:\
                               'standard' and 'sr-x'.")
-        for i, approx in enumerate(two_approx):
-            if approx not in ['erf', 'erfgau', 'gauss', 'sr-xdoci']:
-                raise ValueError("The approximation %d is not available, valid options are:\
-                                  'erf', 'gauss', 'erfgau', 'sr-xdoci'")
-        if not isinstance(two_approx, (list, str)):
-            raise TypeError("one_approx should be a list of str for the approximations to\
-                             be included in the one-electron integrals")
+        if not all([isinstance(approx, str) for approx in two_approx]):
+            print "approx", two_approx
+            raise TypeError("two_approx should be a list of str for the approximations to\
+                             be included in the two-electron integrals")
+        if not all([approx in ['erf', 'erfgau', 'gauss', 'sr-xdoci'] for approx in two_approx]):
+            raise ValueError("The approximation %d is not available, valid options are:\
+                             'erf', 'gauss', 'erfgau', 'sr-xdoci'")
+        if not all([isinstance(par, list) for par in pars]):
+            raise TypeError("The parameters should be given in a list")
+        if not all([isinstance(orb, Orbitals) for orb in orbs]):
+            raise TypeError("Orbitals should be HORTON Orbital objects")
         if len(dms) > 1:
             raise NotImplementedError("Only restricted cases implemented at the moment.")
         if len(orbs) > 1:
@@ -81,7 +84,7 @@ class IntegralsWrapper(object):
         """
         self.pars = newpars
         one_ao = self.one_ao_ref.copy()
-        two_ao = compute_two_integrals(self.obasis, self.two_approx, self.pars):
+        two_ao = compute_two_integrals(self.obasis, self.two_approx, self.pars)
         if self.one_approx == 'sr-x':
             er_sr = self.two_ao_ref.copy()
             er_sr -= two_ao
@@ -114,6 +117,10 @@ def compute_standard_one_integrals(mol, obasis):
         Horton object to work with orbitals' information (energies, occupations
         and coefficients)
     """
+    if not isinstance(mol, IOData):
+        raise TypeError("mol should be a IOData object from HORTON")
+    if not isinstance(obasis, GOBasis):
+        raise TypeError("obasis should be a GOBasis object from HORTON")
     kin = obasis.compute_kinetic()
     natt = obasis.compute_nuclear_attraction(mol.coordinates, mol.pseudo_numbers)
     one = kin + natt
@@ -141,14 +148,20 @@ def compute_two_integrals(obasis, approxs, pars):
         List with parameters needed for the integrals
         for each term in approxs a list with parameters.
     """
+    if not isinstance(obasis, GOBasis):
+        raise TypeError("obasis should be a GOBasis object from HORTON")
+    if not all([isinstance(approx, str) for approx in approxs]):
+        raise TypeError("The approximations should be given as a string in a list")
+    if not all([isinstance(par, list) for par in pars]):
+        raise TypeError("The parameters should be given in a list")
+    nbasis = obasis.nbasis
     two = np.zeros((nbasis, nbasis, nbasis, nbasis))
-    assert isinstance(pars, (list, float))
     for i,approx in enumerate(approxs):
         if approx == 'sr-xdoci':
             pass
         if approx == 'erf':
             assert len(pars[i]) == 1
-            two += obasis.compute_erf_repulsion(pars[0])
+            two += obasis.compute_erf_repulsion(pars[i][0])
         elif approx == 'gauss':
             assert len(pars[i]) == 2
             two += obasis.compute_gauss_repulsion(pars[i][0], pars[i][1])
@@ -159,7 +172,7 @@ def compute_two_integrals(obasis, approxs, pars):
             two += gauss
         else:
             raise ValueError("The %s approximation for the two-electron integrals is not\
-                              implemented in this version" % two_approx)
+                              implemented in this version" % approx)
     return two
 
 
@@ -200,13 +213,14 @@ def compute_sr_potential(nbasis, er_sr, dms, whichpot):
     return sr_potential
 
 
-def use_full_exchange_twoe_doci(nbasis, two_full, two_lr):
+def use_full_exchange_two_doci(nbasis, two_full, two_lr):
     """
     Use the two electron integrals with full exchange HF
     for all elements when only two spatial orbitals
     are involved.
 
     Arguments:
+    ----------
     nbasis: int
         Number of basis functions
     two_full: np.ndarray((nbasis, nbasis, nbasis, nbasis))
@@ -214,21 +228,21 @@ def use_full_exchange_twoe_doci(nbasis, two_full, two_lr):
     two_lr: np.ndarray((nbasis, nbasis, nbasis, nbasis))
         Two-electron integrals of the long-range interaction
     """
+    if not isinstance(nbasis, int):
+        raise TypeError("nbasis should be an integer")
+    if not isinstance(two_full, np.ndarray):
+        raise TypeError("two_full should be given as a np.ndarray")
+    if not isinstance(two_lr, np.ndarray):
+        raise TypeError("two_full should be given as a np.ndarray")
+    if two_full.shape != two_full.shape:
+        raise ValueError("The two arrays should have the same shape")
+    if two_full.shape != ((nbasis, nbasis)):
+        raise ValueError("The shape of the arrays doesn't match with the\
+                          size of the basis nbasis")
     for i in range(nbasis):
         for j in range(nbasis):
             two_lr[i,j,i,j] = two_full[i,j,i,j]
             two_lr[i,j,j,i] = two_full[i,j,j,i]
-
-
-def transform(self, *orbs):
-    """
-    Transform integrals to a new basis
-
-    Arguments:
-    ----------
-    coeffs: np ndarray((nbasis, nbasis))
-    """
-    return transform_integrasl(one, two, method='tensordot', *orbs)
 
 
 def compute_energy_from_potential(potential, dms):
@@ -240,6 +254,8 @@ def compute_energy_from_potential(potential, dms):
     ----------
     potential: np.ndarray(nbasis, nbasis)
         Potential in Fock operator form
+        **Attention** for the Hartree potential it should be divided
+        by 2 before passing it here.
     dms: list, np.ndarray(nbasis, nbasis)
         Density matrices
     """
