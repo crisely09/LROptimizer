@@ -1,15 +1,16 @@
 """Variational optimizer of long-range erfgau potential"""
 
 import numpy as np
+from scipy.linalg import eigh
 
 import pyci
 # TODO replace this by explicit import
 from horton import *
-from ci.cispace import FullCISpace
+from horton.meanfield.orbitals import Orbitals
 from wfns.ham.density import density_matrix
-from optimizer.tools.ciwrapper import compute_ci_fanCI, compute_FCI
-from optimizer.tools.slsqp import *
-from optimizer.tools.functions import *
+from lrtools.ciwrapper import compute_ci_fanCI, compute_FCI
+from lrtools.slsqp import *
+from lrtools.common import *
 
 
 __all__ = ['ErfGauOptimizer', 'FullErfGauOptimizer', 'TruncErfGauOptimizer']
@@ -29,15 +30,17 @@ class ErfGauOptimizer(object):
     optimize_energy
     
     """
-    def __init__(self, core_energy, modintegrals, refintegrals, na, nb, ncore=0, mu=0.0):
+    def __init__(self, nbasis, core_energy, modintegrals, refintegrals, na, nb, ncore=0, mu=0.0):
         """
         Arguments:
         -----------
+        nbasis: int
+            Number of spatial orbitals
         core_energy: float
             Nuclear-repulsion energy
         modintegrals: IntegralsWrapper
             One- and two-electron intregrals of the model to be optimized
-        refintegrals: IntegralsWrapper
+        refintegrals: list, np.ndarray
             HF one- and two-electron integrals
         na/nb
             Number of alpha/beta electrons
@@ -46,6 +49,7 @@ class ErfGauOptimizer(object):
         mu: float
             Range-separation parameter
         """
+        self.nbasis = nbasis
         self.core_energy = core_energy
         self.modintegrals = modintegrals
         self.refintegrals = refintegrals
@@ -54,6 +58,7 @@ class ErfGauOptimizer(object):
         self.ncore = ncore
         self.mu = mu
         self.mu_energy = 0.0
+        self.naturals = False
 
     def set_mu(self, mu):
         """ Give some value for parameter mu"""
@@ -118,15 +123,18 @@ class FullErfGauOptimizer(ErfGauOptimizer):
     """
     Variational optimizer for the erfgau potential from FCI expansion
     """
-    def __init__(self, core_energy, modintegrals, refintegrals, na, nb, ncore=0, mu=0.0):
+    def __init__(self, nbasis, core_energy, modintegrals, refintegrals, na, nb,
+                 ncore=0, mu=0.0):
         """
         Arguments:
         -----------
+        nbasis: int
+            Number of spatial orbitals
         core_energy: float
             Nuclear-repulsion energy
         modintegrals: IntegralsWrapper
             One- and two-electron intregrals of the model to be optimized
-        refintegrals: IntegralsWrapper
+        refintegrals: list, np.ndarray
             HF one- and two-electron integrals
         na/nb: int
             Number of alpha/beta electrons
@@ -135,7 +143,8 @@ class FullErfGauOptimizer(ErfGauOptimizer):
         mu: float
             Range-separation parameter
         """
-        ErfGauOptimizer.__init__(core_energy, modintegrals, refintegrals, na, nb, ncore, mu)
+        ErfGauOptimizer.__init__(self, nbasis, core_energy, modintegrals, refintegrals,
+                                 na, nb, ncore, mu)
 
     def compute_energy(self, pars):
         """Function for Scipy to compute the energy"""
@@ -151,21 +160,29 @@ class FullErfGauOptimizer(ErfGauOptimizer):
         cienergy, cicoeffs, civec = compute_FCI(self.nbasis, self.core_energy,
                                                 self.modintegrals.one, self.modintegrals.two,
                                                 self.na, self.nb)
-        (dm1,), (dm2,) = density_matrix(coeffs, new_civec, self.nbasis)
-        norb = self.get_naturalorbs(dm1)
-
-        # Transform integrals to NO basis
-        (one_no,), (two_no,) = transform_integrals(self.modintegrals.one,
-                                                   self.modintegrals.two, 'tensordot',
-                                                   norb_alpha)
-        (one_no_full,), (two_no_full,) = transform_integrals(self.refintegrals.one,
-                                                             self.refintegrals.two,
-                                                             'tensordot', norb_alpha)
-
-        self.mu_energy = np.einsum('ij,ij', one_no, dm1)\
+        (dm1,), (dm2,) = density_matrix(cicoeffs, civec, self.nbasis)
+        if self.naturals:
+            norb = self.get_naturalorbs(dm1)
+            
+            # Transform integrals to NO basis
+            (one_no,), (two_no,) = transform_integrals(self.modintegrals.one,
+                                                       self.modintegrals.two, 'tensordot',
+                                                       norb)
+            (one_no_full,), (two_no_full,) = transform_integrals(self.refintegrals[0],
+                                                                 self.refintegrals[1],
+                                                                 'tensordot', norb)
+            self.mu_energy = np.einsum('ij,ij', one_no, dm1)\
                         + 0.5*np.einsum('ijkl, ijkl', two_no, dm2) + self.core_energy
-        energy_exp = np.einsum('ij,ij', one_no_full, dm1)\
+            energy_exp = np.einsum('ij,ij', one_no_full, dm1)\
                         + 0.5*np.einsum('ijkl, ijkl', two_no_full, dm2)
+
+        else:
+            energy_exp = np.einsum('ij, ij', self.refintegrals[0], dm1)\
+                + 0.5*np.einsum('ijkl, ijkl', self.refintegrals[1], dm2)
+            self.mu_energy = np.einsum('ij,ij', self.modintegrals.one, dm1)\
+                        + 0.5*np.einsum('ijkl, ijkl', self.modintegrals.two, dm2)\
+                        + self.core_energy
+
         energy_exp += self.core_energy
         if self.optype == 'standard':
             return energy_exp
@@ -178,15 +195,18 @@ class TruncErfGauOptimizer(ErfGauOptimizer):
     Variational optimizer for the erfgau potential from truncated CI expansion
     count_cicoeffs
     """
-    def __init__(self, core_energy, modintegrals, refintegrals, na, nb, ncore=0, mu=0.0, ndet):
+    def __init__(self, nbasis, core_energy, modintegrals, refintegrals, na, nb,
+                 ncore=0, mu=0.0, ndet=None):
         """
         Arguments:
         -----------
+        nbasis: int
+            Number of spatial orbitals
         core_energy: float
             Nuclear-repulsion energy
         modintegrals: IntegralsWrapper
             One- and two-electron intregrals of the model to be optimized
-        refintegrals: IntegralsWrapper
+        refintegrals: list, np.ndarray
             HF one- and two-electron integrals
         na/nb
             Number of alpha/beta electrons
@@ -197,7 +217,8 @@ class TruncErfGauOptimizer(ErfGauOptimizer):
         ndet: int
             Number of determinants to be included in the CI expansion
         """
-        ErfGauOptimizer.__init__(core_energy, modintegrals, refintegrals, na, nb, ncore, mu)
+        ErfGauOptimizer.__init__(self, nbasis, core_energy, modintegrals, refintegrals,
+                                 na, nb, ncore, mu)
 
 
     def converge_naturalorbs(self, civec, cicoeffs, eps=1e-4):
@@ -224,18 +245,19 @@ class TruncErfGauOptimizer(ErfGauOptimizer):
             cienergy, cicoeffs, civec = compute_ci_fanCI(nelec, self.nbasis, self.modintegrals.one,
                                                          self.modintegrals.two, core_energy, civec)
             
-            (dm1,), (dm2,) = density_matrix(coeffs, new_civec, self.nbasis)
+            (dm1,), (dm2,) = density_matrix(coeffs, civec, self.nbasis)
             norb = self.get_naturalorbs_low(dm1)
             
             # Transform integrals to NO basis
             (one_no,), (two_no,) = transform_integrals(self.modintegrals.one,
                                                        self.modintegrals.two, 'tensordot',
-                                                       norb_alpha)
-            (one_no_full,), (two_no_full,) = transform_integrals(self.refintegrals.one,
-                                                                 self.refintegrals.two,
-                                                                 'tensordot', norb_alpha)
+                                                       norb)
+            (one_no_full,), (two_no_full,) = transform_integrals(self.refintegrals[0],
+                                                                 self.refintegrals[1],
+                                                                 'tensordot', norb)
             # Assign values to integrals
-            self.refintegrals.assign(one_no_full, two_no_full)
+            self.refintegrals[0][:] = one_no_full
+            self.refintegrals[1][:] = two_no_full
             self.modintegrals.assign(one_no, two_no)
         return dm1, dm2
 
@@ -286,7 +308,7 @@ class TruncErfGauOptimizer(ErfGauOptimizer):
         self.mu_energy = np.einsum('ij,ij', self.modintegrals.one, dm1)\
                         + 0.5*np.einsum('ijkl, ijkl', self.modintegrals.two, dm2) 
         self.mu_energy += self.core_energy
-        energy_exp = np.einsum('ij,ij', self.refintegrals.one, dm1)\
+        energy_exp = np.einsum('ij,ij', self.refintegrals[0], dm1)\
                         + 0.5*np.einsum('ijkl, ijkl', self.modintegrals.two, dm2)
         energy_exp += self.core_energy
         if self.optype == 'standard':

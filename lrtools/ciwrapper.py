@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 import pyci
-from wfns.ham import ChemicalHamiltonian
+from wfns.ham.chemical import ChemicalHamiltonian
 from wfns.wfn.ci.base import CIWavefunction
 from wfns.solver.ci import brute
 
@@ -196,9 +196,7 @@ def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0)
         FCI vectors (Slater determinants occupations)
     """
     # Using PyCI to compute FCI energy
-    ciham = pyci.FullCIHam(self.core_energy, one_mo, two_mo)
-    na = self.nelec/2
-    nb = na
+    ciham = pyci.FullCIHam(core_energy, one_int, two_int)
     wfn = pyci.FullCIWfn(ciham.nbasis, na, nb)
     
     # Compute the energy
@@ -209,5 +207,5 @@ def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0)
 
     # Get the Slater determinats
     alphas, betas = get_dets_pyci(wfn)
-    civec = get_ci_sd_pyci(self.nbasis, alphas, betas)
+    civec = get_ci_sd_pyci(nbasis, alphas, betas)
     return cienergy, cicoeffs, civec

@@ -1,5 +1,9 @@
 """ Horton wrapper to compute HF/LDA calculation"""
 
+import numpy as np
+
+from horton import *
+
 def compute_hf(mol, obasis, na, nb, kin, natt, er, olp):
     """
     Compute HF
@@ -19,6 +23,15 @@ def compute_hf(mol, obasis, na, nb, kin, natt, er, olp):
     core_energy
     orbs
     """
+    nbasis = obasis.nbasis
+    if kin.shape != (nbasis, nbasis):
+        raise ValueError("The kinetic energy integrals don't have the right shape.")
+    if natt.shape != (nbasis, nbasis):
+        raise ValueError("The nuclear-attraction integrals don't have the right shape.")
+    if olp.shape != (nbasis, nbasis):
+        raise ValueError("The overlap integrals don't have the right shape.")
+    if er.shape != (nbasis, nbasis, nbasis, nbasis):
+        raise ValueError("The two-electron integrals don't have the right shape.")
     if na == nb:
         # Do RHF
         # Create alpha orbitals
@@ -51,7 +64,7 @@ def compute_hf(mol, obasis, na, nb, kin, natt, er, olp):
         fock_alpha = np.zeros((obasis.nbasis, obasis.nbasis))
         ham.compute_fock(fock_alpha)
         orb_alpha.from_fock_and_dm(fock_alpha, dm_alpha, olp)
-        orbs = orb_alpha
+        orbs = [orb_alpha]
     else:
         # Do UHF
         # Create alpha orbitals
@@ -88,9 +101,9 @@ def compute_hf(mol, obasis, na, nb, kin, natt, er, olp):
         ham.compute_fock(fock_alpha, fock_beta)
         orb_alpha.from_fock_and_dm(fock_alpha, dm_alpha, olp)
         orb_beta.from_fock_and_dm(fock_beta, dm_beta, olp)
-        orbs = (orb_alpha, orb_beta)
+        orbs = [orb_alpha, orb_beta]
+    total_energy = ham.compute_energy()
     core_energy = external['nn']
-    total_energy = ham.cache['energy']
     return total_energy, core_energy, orbs
 
 
@@ -152,7 +165,7 @@ def compute_lda(mol, obasis, na, nb):
         fock_alpha = np.zeros((obasis.nbasis, obasis.nbasis))
         ham.compute_fock(fock_alpha)
         orb_alpha.from_fock_and_dm(fock_alpha, dm_alpha, olp)
-        orbs = orb_alpha
+        orbs = [orb_alpha]
     else:
         # Do ULDA
         # Create alpha orbitals
@@ -190,8 +203,33 @@ def compute_lda(mol, obasis, na, nb):
         ham.reset(dm_alpha, dm_beta)
         fock_alpha = np.zeros((obasis.nbasis, obasis.nbasis))
         ham.compute_fock(fock_alpha)
-        orbs = (orb_alpha, orb_beta)
+        orbs = [orb_alpha, orb_beta]
         
     core_energy = external['nn']
     total_energy = ham.cache['energy']
     return total_energy, core_energy, orbs
+
+
+def prepare_integrals(mol, obasis):
+    """
+    Compute all integrals needed for a meanfield calculation
+
+    Arguments:
+    ----------
+    mol: IOData
+        Horton object with the information of the molecule
+    obasis: GOBasis
+        Horton object with the basis set information.
+
+    Returns:
+    --------
+    kin, na, olp, er
+        Kinetic, nuclear-attraction, overlap and electron-repulsion
+        integrals
+    """
+    kin = obasis.compute_kinetic()
+    na = obasis.compute_nuclear_attraction(mol.coordinates, mol.pseudo_numbers)
+    olp = obasis.compute_overlap()
+    er = obasis.compute_electron_repulsion()
+
+    return kin, na, olp, er

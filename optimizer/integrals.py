@@ -61,8 +61,6 @@ class IntegralsWrapper(object):
             raise TypeError("The parameters should be given in a list")
         if not all([isinstance(orb, Orbitals) for orb in orbs]):
             raise TypeError("Orbitals should be HORTON Orbital objects")
-        if len(dms) > 1:
-            raise NotImplementedError("Only restricted cases implemented at the moment.")
         if len(orbs) > 1:
             raise NotImplementedError("Only restricted cases implemented at the moment.")
         self.mol = mol
@@ -71,6 +69,10 @@ class IntegralsWrapper(object):
         self.one_approx = one_approx
         self.two_approx = two_approx
         self.orbs = orbs
+        dms = []
+        for orb in self.orbs:
+            dms.append(orb.to_dm())
+        self.dms = dms
 
         # Compute integrals
         one_ao = compute_standard_one_integrals(self.mol, self.obasis)
@@ -160,6 +162,7 @@ def compute_two_integrals(obasis, approxs, pars):
         if approx == 'sr-xdoci':
             pass
         if approx == 'erf':
+            print len(pars[i])
             assert len(pars[i]) == 1
             two += obasis.compute_erf_repulsion(pars[i][0])
         elif approx == 'gauss':
