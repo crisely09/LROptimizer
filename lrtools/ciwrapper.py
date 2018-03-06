@@ -26,10 +26,12 @@ import numpy as np
 import pyci
 from wfns.ham.chemical import ChemicalHamiltonian
 from wfns.wfn.ci.base import CIWavefunction
+from wfns.wfn.ci.fci import FCI
+from wfns.wfn.ci.cisd import CISD
 from wfns.solver.ci import brute
 
 __all__ = ['get_ci_info', 'get_ci_sd_pyci', 'get_dets_pyci',
-           'compute_ci_fanCI',]
+           'compute_ci_fanCI', 'compute_my_dm']
 
 
 def get_ci_info_from_ciflow(fn):
@@ -171,15 +173,15 @@ def compute_ci_fanCI(nelec, nbasis, one, two, core_energy, civec=None, full=True
     CI Ground State Energy, Groud State CI coefficients
     """
     nspin = nbasis*2
-    if civec:
-        ci = CIWavefunction(nelec, nspin, sd_vec)
+    if civec is not None:
+        ci = CIWavefunction(nelec, nspin, sd_vec=civec)
     else:
         if full:
             ci = FCI(nelec, nspin)
         else:
             ci = CISD(nelec, nspin)
         civec = ci.sd_vec
-    ham = ChemicalHamiltonian(one_int, two_int, orbtype='restricted', energy_nuc_nuc=core_energy)
+    ham = ChemicalHamiltonian(one, two, orbtype='restricted', energy_nuc_nuc=core_energy)
 
     # optimize
     energies, coeffs = brute(ci, ham)
@@ -228,3 +230,12 @@ def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0)
     alphas, betas = get_dets_pyci(wfn)
     civec = get_ci_sd_pyci(nbasis, alphas, betas)
     return cienergy, cicoeffs, civec
+
+def compute_my_dm(dm1, orb, nbasis):
+    dmbar = np.zeros((nbasis, nbasis))
+    for k in range(nbasis):
+        for l in range(nbasis):
+            for mu in range(nbasis):
+                for v in range(nbasis):
+                    dmbar[mu, v] += dm1[k, l]*orb.coeffs[mu,k]*orb.coeffs[v,l]
+    return dmbar

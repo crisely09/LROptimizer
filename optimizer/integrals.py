@@ -26,6 +26,8 @@ from horton.io.iodata import IOData
 from horton.gbasis.gobasis import GOBasis
 from horton.meanfield.orbitals import Orbitals
 from horton.meanfield.indextransform import transform_integrals
+from horton.meanfield.hamiltonian import REffHam
+from horton.meanfield.observable import RDirectTerm, RExchangeTerm
 
 
 class IntegralsWrapper(object):
@@ -73,7 +75,7 @@ class IntegralsWrapper(object):
             print "approx", two_approx
             raise TypeError("two_approx should be a list of str for the approximations to\
                              be included in the two-electron integrals")
-        if not all([approx in ['erf', 'erfgau', 'gauss', 'sr-xdoci'] for approx in two_approx]):
+        if not all([approx in ['erf', 'erfgau', 'gauss', 'sr-xdoci', 'sr-hx'] for approx in two_approx]):
             raise ValueError("The approximation %d is not available, valid options are:\
                              'erf', 'gauss', 'erfgau', 'sr-xdoci'")
         if not all([isinstance(par, list) for par in pars]):
@@ -105,16 +107,20 @@ class IntegralsWrapper(object):
         """
         self.pars = newpars
         one_ao = self.one_ao_ref.copy()
-        two_ao = compute_two_integrals(self.obasis, self.two_approx, self.pars)
-        if self.one_approx == 'sr-x':
+        self.two_ao = compute_two_integrals(self.obasis, self.two_approx, self.pars)
+        if self.one_approx[0] == 'sr-x':
+            print "%%%%%%%%%%%%%%into sr-x in integrals"
             er_sr = self.two_ao_ref.copy()
-            er_sr -= two_ao
-            sr_pot = compute_sr_potential(self.nbasis, er_sr, dms, 'exchange')
-            sr_pot += compute_sr_potential(self.nbasis, er_sr, dms, 'hartree')
+            er_sr -= self.two_ao
+            sr_pot = compute_sr_potential(self.nbasis, er_sr, self.dms, 'exchange')
+            sr_pot += compute_sr_potential(self.nbasis, er_sr, self.dms, 'hartree')
             one_ao += sr_pot
         if 'sr-xdoci' in self.two_approx:
-            use_full_exchange_twoe_doci(self.nbasis, self.two_ao_ref, two_ao)
-        (one,), (two,) = transform_integrals(one_ao, two_ao, 'tensordot', self.orbs[0])
+            use_full_exchange_twoe_doci(self.nbasis, self.two_ao_ref, self.two_ao)
+        if 'sr-hx' in self.two_approx:
+            use_full_hx(self.nbasis, self.two_ao_ref, self.two_ao, 'exchange')
+            use_full_hx(self.nbasis, self.two_ao_ref, self.two_ao, 'hartree')
+        (one,), (two,) = transform_integrals(one_ao, self.two_ao, 'tensordot', self.orbs[0])
         self.one = one
         self.two = two
 
@@ -178,10 +184,9 @@ def compute_two_integrals(obasis, approxs, pars):
     nbasis = obasis.nbasis
     two = np.zeros((nbasis, nbasis, nbasis, nbasis))
     for i,approx in enumerate(approxs):
-        if approx == 'sr-xdoci':
+        if approx == 'sr-xdoci' or approx == 'sr-hx':
             pass
-        if approx == 'erf':
-            print len(pars[i])
+        elif approx == 'erf':
             assert len(pars[i]) == 1
             two += obasis.compute_erf_repulsion(pars[i][0])
         elif approx == 'gauss':
@@ -220,7 +225,7 @@ def compute_sr_potential(nbasis, er_sr, dms, whichpot):
         # Restricted case
         if whichpot == 'hartree':
             ham = REffHam([RDirectTerm(er_sr, 'hartree')])
-        else:
+        elif whichpot == 'exchange':
             ham = REffHam([RExchangeTerm(er_sr, 'x')])
         ham.reset(dms[0])
     elif len(dms) == 2:
@@ -265,6 +270,49 @@ def use_full_exchange_two_doci(nbasis, two_full, two_lr):
         for j in range(nbasis):
             two_lr[i,j,i,j] = two_full[i,j,i,j]
             two_lr[i,j,j,i] = two_full[i,j,j,i]
+
+def use_full_hx(nbasis, two_full, two_lr, which):
+    """
+    Use the two electron integrals with full exchange HF
+    for all elements when only two spatial orbitals
+    are involved.
+
+    Arguments:
+    ----------
+    nbasis: int
+        Number of basis functions
+    two_full: np.ndarray((nbasis, nbasis, nbasis, nbasis))
+        Two-electron integrals of the full Coulomb interaction
+    two_lr: np.ndarray((nbasis, nbasis, nbasis, nbasis))
+        Two-electron integrals of the long-range interaction
+    whichpot: str
+        Type of potential to be computed. Options are:
+        'exchange' for the exchange potential
+        'hartree' for the Hartree potential
+    """
+    if not isinstance(nbasis, int):
+        raise TypeError("nbasis should be an integer")
+    if not isinstance(two_full, np.ndarray):
+        raise TypeError("two_full should be given as a np.ndarray")
+    if not isinstance(two_lr, np.ndarray):
+        raise TypeError("two_full should be given as a np.ndarray")
+    if two_full.shape != two_full.shape:
+        raise ValueError("The two arrays should have the same shape")
+    if two_full.shape != ((nbasis, nbasis, nbasis, nbasis)):
+        print "two_full shape", two_full.shape
+        raise ValueError("The shape of the arrays doesn't match with the\
+                          size of the basis nbasis")
+    if not isinstance(which, str):
+        raise TypeError("which must be a str")
+    if which not in ['hartree', 'exchange']:
+        raise ValueError("Valid options for which are 'hartree' or 'exchange'")
+    for i in range(nbasis):
+        for j in range(nbasis):
+            if which == 'hartree':
+                two_lr[i,j,i,j] = two_full[i,j,i,j]
+            else:
+                two_lr[i,j,j,i] = two_full[i,j,j,i]
+                two_lr[i,i,j,j] = two_full[i,i,j,j]
 
 
 def compute_energy_from_potential(potential, dms):
