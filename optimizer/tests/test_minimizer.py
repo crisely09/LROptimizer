@@ -160,12 +160,12 @@ def test_erfgau_truc():
     Hamiltonian, using the error function
     """
     mol = IOData(numbers=np.array([2]), coordinates=np.array([[0., 0., 0.]]))
-    obasis = get_gobasis(mol.coordinates, mol.numbers, 'cc-pvdz')
+    obasis = get_gobasis(mol.coordinates, mol.numbers, 'aug-cc-pvdz')
     one_approx = ['standard']
     two_approx = ['erfgau']
-    mu = 1.0
-    c = 1.9*mu
-    a = (1.5*mu)**2
+    mu = 0.01
+    c = 229.94
+    a = 103.36
     pars = [[mu, c, a]]
     kin, natt, olp, er = prepare_integrals(mol, obasis)
     na = 1
@@ -176,13 +176,13 @@ def test_erfgau_truc():
     # Transform integrals to MO basis
     (one_mo_ref,), (two_mo_ref,) = transform_integrals(kin + natt, er_ref, 'tensordot', orbs[0])
     refintegrals = [one_mo_ref, two_mo_ref]
-    ndet = 20
-    optimizer = TruncErfGauOptimizer(obasis.nbasis, core_energy, modintegrals, refintegrals, na, nb, mu=mu, ndet=ndet)
+    optimizer = FullErfGauOptimizer(obasis.nbasis, core_energy, modintegrals, refintegrals, na, nb, mu=mu)
     optimizer.set_olp(olp)
     optimizer.set_orb_alpha(orbs[0])
     optimizer.set_dm_alpha(orbs[0].to_dm())
     optimizer.optype = 'standard'
     cpars = [c, a]
+    optimizer.naturals = True
     energy = optimizer.compute_energy(cpars)
     print "energy", energy
     print "mu energy", optimizer.mu_energy

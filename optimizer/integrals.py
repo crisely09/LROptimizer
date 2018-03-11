@@ -26,6 +26,7 @@ from horton.io.iodata import IOData
 from horton.gbasis.gobasis import GOBasis
 from horton.meanfield.orbitals import Orbitals
 from horton.meanfield.indextransform import transform_integrals
+from horton.meanfield.indextransform import split_core_active
 from horton.meanfield.hamiltonian import REffHam
 from horton.meanfield.observable import RDirectTerm, RExchangeTerm
 
@@ -36,7 +37,7 @@ class IntegralsWrapper(object):
     
     """
 
-    def __init__(self, mol, obasis, one_approx, two_approx, pars, orbs):
+    def __init__(self, mol, obasis, one_approx, two_approx, pars, orbs, ncore=0, core=None):
         """
         one_approx: str
             Approximation for the one-electron Hamiltonian.
@@ -57,9 +58,13 @@ class IntegralsWrapper(object):
               requires 3 parameters: mu, the range-separation parameter,
               c and alpha, the coefficient and exponent of the Gaussian function
         pars: list with shape (2,)
-            Parameters for the integrals. [[parameters for one],[parameters for two]]
+            Parameters for the integrals. [[parameters for one],[parameters for two]].
         orbs: Orbital
-            HF/LDA orbital objects from HORTON
+            HF/LDA orbital objects from HORTON.
+        ncore: int
+            Number of core orbitals.
+        core: float
+            Core energy of the system.
         """
         if not isinstance(mol, IOData):
             raise TypeError("mol must be a HORTON IOData object")
@@ -84,12 +89,19 @@ class IntegralsWrapper(object):
             raise TypeError("Orbitals should be HORTON Orbital objects")
         if len(orbs) > 1:
             raise NotImplementedError("Only restricted cases implemented at the moment.")
+        if not isinstance(ncore, int):
+            raise TypeError("ncore should be int")
+        if ncore > 0:
+            if core is None:
+                raise ValueError("If core orbitals declared, the core energy is also needed.")
         self.mol = mol
         self.obasis = obasis
         self.nbasis = obasis.nbasis
         self.one_approx = one_approx
         self.two_approx = two_approx
         self.orbs = orbs
+        self.ncore = ncore
+        self.core_energy = core
         dms = []
         for orb in self.orbs:
             dms.append(orb.to_dm())
@@ -109,7 +121,6 @@ class IntegralsWrapper(object):
         one_ao = self.one_ao_ref.copy()
         self.two_ao = compute_two_integrals(self.obasis, self.two_approx, self.pars)
         if self.one_approx[0] == 'sr-x':
-            print "%%%%%%%%%%%%%%into sr-x in integrals"
             er_sr = self.two_ao_ref.copy()
             er_sr -= self.two_ao
             sr_pot = compute_sr_potential(self.nbasis, er_sr, self.dms, 'exchange')
@@ -117,19 +128,30 @@ class IntegralsWrapper(object):
             one_ao += sr_pot
         if 'sr-xdoci' in self.two_approx:
             use_full_exchange_twoe_doci(self.nbasis, self.two_ao_ref, self.two_ao)
-        if 'sr-hx' in self.two_approx:
+        elif 'sr-hx' in self.two_approx:
             use_full_hx(self.nbasis, self.two_ao_ref, self.two_ao, 'exchange')
             use_full_hx(self.nbasis, self.two_ao_ref, self.two_ao, 'hartree')
-        (one,), (two,) = transform_integrals(one_ao, self.two_ao, 'tensordot', self.orbs[0])
-        self.one = one
-        self.two = two
+        # Transform integrals to the MO basis
+        if self.ncore > 0:
+            nactive = self.nbasis - self.ncore
+            one, two, core_energy = split_core_active(one_ao, self.two_ao, self.core_energy,
+                                                      self.orbs[0], ncore=self.ncore, nactive=nactive)
+            self.core_energy = core_energy
+        else:
+            (one,), (two,) = transform_integrals(one_ao, self.two_ao, 'tensordot', self.orbs[0])
+        self.assign(one, two)
+        del one, two
 
     def assign(self, one, two):
         """
         Assign values to the integrals
         """
-        self.one[:] = one
-        self.two[:] = two
+        if hasattr(self, 'one'):
+            self.one[:] = one
+            self.two[:] = two
+        else:
+            self.one = one
+            self.two = two
 
 
 def compute_standard_one_integrals(mol, obasis):
