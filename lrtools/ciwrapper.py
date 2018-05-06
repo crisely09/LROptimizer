@@ -181,10 +181,11 @@ def compute_ci_fanCI(nelec, nbasis, one, two, core_energy, civec=None, full=True
 
     # optimize
     energies, coeffs = brute(ci, ham)
+    del(ham)
     return energies[0] + core_energy, coeffs[0], civec
 
 
-def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0):
+def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0, solver=None):
     """Compute FCI energy with PyCI code
 
     Arguments:
@@ -216,15 +217,28 @@ def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0)
     two_int = two_int.reshape(two_int.shape[0]**2, two_int.shape[1]**2)
     ciham = pyci.Hamiltonian(core_energy, one_int, two_int)
     wfn = pyci.FullCIWavefunction(nbasis, na, nb)
+    if solver is None:
+        if wfn.size > 50000:
+            solver = 'sparse'
+        else:
+            solver = 'dense'
     
     # Compute the energy
-    solver = pyci.SparseSolver(wfn, ciham)
+    if solver == 'sparse':
+        solver = pyci.SparseSolver(wfn, ciham)
+    elif solver == 'dense':
+        solver = pyci.DenseSolver(wfn, ciham)
+    else:
+        raise ValueError("Options for the solver are: 'sparse' or 'dense'.")
     solver()
     cienergy = solver.eigenvalues()[state]
     cicoeffs = solver.eigenvectors().flatten()
 
     # Get the Slater determinats
     civec = get_ci_sd_pyci(nbasis, wfn)
+    # Clean space
+    del(ciham)
+    del(wfn)
     return cienergy, cicoeffs, civec
 
 def compute_my_dm(dm1, orb, nbasis):
