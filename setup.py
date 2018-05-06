@@ -52,7 +52,7 @@ def readme():
 
 setup(
     name='LROptimizer',
-    version=get_version(),
+    version='0.0.1b',
     description='Optimizer of Long-Range model Hamiltonians.',
     long_description=readme(),
     author='Cristina E. Gonz\'alez-Espinoza',

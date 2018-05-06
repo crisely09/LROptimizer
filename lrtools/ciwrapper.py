@@ -30,8 +30,8 @@ from wfns.wfn.ci.fci import FCI
 from wfns.wfn.ci.cisd import CISD
 from wfns.solver.ci import brute
 
-__all__ = ['get_ci_info', 'get_ci_sd_pyci', 'get_dets_pyci',
-           'compute_ci_fanCI', 'compute_my_dm']
+__all__ = ['get_ci_info_from_ciflow', 'get_ci_sd_pyci', 'get_larger_ci_coeffs',
+           'get_ci_sd_pyci', 'compute_ci_fanCI', 'compute_my_dm', 'compute_FCI']
 
 
 def get_ci_info_from_ciflow(fn):
@@ -78,7 +78,7 @@ def get_ci_info_from_ciflow(fn):
     return civec, coeffs
 
 
-def get_ci_sd_pyci(nbasis, alphas, betas):
+def get_ci_sd_pyci(nbasis, wfn):
     """
     Get Slater determinants and coefficients from PyCI
 
@@ -86,24 +86,20 @@ def get_ci_sd_pyci(nbasis, alphas, betas):
     ---------
     nbasis: int
         Total number of basis functions.
-    alphas: list (nbasis, ndeterminants), int
-        List with occupations of alpha electrons.
-    betas: list (nbasis, ndeterminats), int
-        List with occupations of beta electrons
+    wfn: CIWavefunction
+        Wavefunction object from PyCI
     """
     sd_vec = []
     # Loop over civectors and make strings
-    for i in range(len(alphas)):
-        a = list('0' * nbasis)
-        b = list('0' * nbasis)
-        for j in range(len(alphas)):
-            if j in alphas[i]:
-                a[j] = '1'
-            if j in betas[i]:
-                b[j] = '1'
-        # Reverse order to match FanCI format
-        a = a[::-1]; a = ''.join(a)
-        b = b[::-1]; b = ''.join(b)
+    for i in wfn:
+        # Convert to bitstring
+        a = bin(i[0][0]).split('b')[1]
+        b = bin(i[1][0]).split('b')[1]
+        # Add zeros when missing
+        amiss = nbasis - len(a)
+        bmiss = nbasis - len(b)
+        a = '0'*amiss + a
+        b = '0'*bmiss + b
         vec = '0b%s%s' % (b, a)
         # Convert bitstring to integer
         vec = int(vec,2)
@@ -217,18 +213,18 @@ def compute_FCI(nbasis, core_energy, one_int, two_int, na, nb, ncore=0, state=0)
         FCI vectors (Slater determinants occupations)
     """
     # Using PyCI to compute FCI energy
-    ciham = pyci.FullCIHam(core_energy, one_int, two_int)
-    wfn = pyci.FullCIWfn(ciham.nbasis, na, nb)
+    two_int = two_int.reshape(two_int.shape[0]**2, two_int.shape[1]**2)
+    ciham = pyci.Hamiltonian(core_energy, one_int, two_int)
+    wfn = pyci.FullCIWavefunction(nbasis, na, nb)
     
     # Compute the energy
-    op = ciham.sparse_operator(wfn)
-    result = pyci.cisolve(op)
-    cienergy = result[state][0]
-    cicoeffs = result[state][1]
+    solver = pyci.SparseSolver(wfn, ciham)
+    solver()
+    cienergy = solver.eigenvalues()[state]
+    cicoeffs = solver.eigenvectors().flatten()
 
     # Get the Slater determinats
-    alphas, betas = get_dets_pyci(wfn)
-    civec = get_ci_sd_pyci(nbasis, alphas, betas)
+    civec = get_ci_sd_pyci(nbasis, wfn)
     return cienergy, cicoeffs, civec
 
 def compute_my_dm(dm1, orb, nbasis):

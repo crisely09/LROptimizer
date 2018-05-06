@@ -231,6 +231,7 @@ class FullErfOptimizer(ErfGauOptimizer):
         else:
             return self.mu_energy - energy_exp
 
+
 class FullGauOptimizer(ErfGauOptimizer):
     """
     Variational optimizer for the erfgau potential from FCI expansion
@@ -258,6 +259,7 @@ class FullGauOptimizer(ErfGauOptimizer):
         ErfGauOptimizer.__init__(self, nbasis, core_energy, modintegrals, refintegrals,
                                  na, nb, ncore, mu)
         self.ccounts = None
+        self.cicoeffs = None
 
     def compute_energy(self, pars):
         """Function for Scipy to compute the energy"""
@@ -288,6 +290,7 @@ class FullGauOptimizer(ErfGauOptimizer):
             cienergy, cicoeffs, civec = compute_FCI(self.nbasis, self.core_energy,
                                                     one_no, two_no,
                                                     self.na, self.nb)
+            self.cicoeffs = cicoeffs
             (dm1,), (dm2,) = density_matrix(cicoeffs, civec, self.nbasis)
             energy_exp = np.einsum('ij,ij', one_no_full, dm1)\
                         + 0.5*np.einsum('ijkl, ijkl', two_no_full, dm2)
@@ -368,6 +371,7 @@ class FullGauOptimizer(ErfGauOptimizer):
         fmin = result[0]
         emin = result[1]
         return result
+
 
 class FullErfGauOptimizer(ErfGauOptimizer):
     """
