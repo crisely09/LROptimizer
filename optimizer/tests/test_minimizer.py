@@ -152,7 +152,7 @@ def test_erfgau_lr():
     print "energy", energy
     print "mu energy", optimizer.mu_energy
 
-#test_erfgau_lr()
+test_erfgau_lr()
 
 def test_erfgau_truc():
     """
@@ -186,4 +186,4 @@ def test_erfgau_truc():
     energy = optimizer.compute_energy(cpars)
     print "energy", energy
     print "mu energy", optimizer.mu_energy
-test_erfgau_truc()
+#test_erfgau_truc()
